@@ -1,0 +1,523 @@
+/**
+* Simulação Ambiental - Mobilidade Humana no Pará
+* Baseado nos padrões de migração interna e deslocamento no Estado do Pará
+* Focando em Belém, Ilha do Marajó e interior do estado
+*/
+
+model Modelo_MobilidadePara
+
+global {
+    // Dimensões do mundo representando o Estado do Pará
+    int largura_mundo <- 200;
+    int altura_mundo <- 150;
+    
+    // Controle temporal
+    int ano <- 0;
+    int ciclos_por_ano <- 12; // 1 ano = 12 ciclos
+    int mes_atual <- 1;
+    
+    // Estatísticas globais
+    int total_migracoes <- 0;
+    int total_deslocados_temporarios <- 0;
+    int familias_em_risco <- 0;
+    
+    // Parâmetros climáticos do Pará
+    float intensidade_chuvas <- 1.0; // Período chuvoso vs seco
+    bool periodo_chuvoso <- true;
+    bool evento_extremo_ativo <- false;
+    
+    // Cores temáticas
+    rgb azul_amazonia <- rgb(65, 105, 225);
+    rgb verde_floresta <- rgb(34, 139, 34);
+    rgb marrom_terra <- rgb(139, 69, 19);
+    rgb vermelho_critico <- rgb(220, 20, 60);
+    rgb cinza_urbano <- rgb(105, 105, 105);
+    rgb amarelo_atencao <- rgb(255, 215, 0);
+    
+    // Fatores específicos do Pará
+    float taxa_desmatamento <- 0.02;
+    float impacto_mudancas_climaticas <- 1.2;
+    
+    file dados_regioes <- file("C:/Users/Raphael/Desktop/regioes.csv");  // Ajuste o caminho
+    file dados_familias <- file("C:/Users/Raphael/Desktop/familias.csv"); // Ajuste o caminho
+    
+    init {
+        
+        
+ // Ler dados das regiões do CSV
+create RegiaoAmbiental from: dados_regioes with: [
+        name::read("nome"),
+    center::point(float(read("x")), float(read("y"))),  // Conversão explícita
+    
+    radius::float(read("raio")),
+    environment_type::read("tipo"),
+    max_capacity::int(read("capacidade")),
+    flood_risk::float(read("risco_inundacao")),
+    job_opportunities::float(read("oportunidades_emprego"))
+];
+create FamiliaPara from: dados_familias with: [
+    name::read("nome_familia"),
+    current_region::(RegiaoAmbiental first_with (each.name = read("regiao"))),
+    socioeconomic_profile::read("perfil"),
+    family_income::float(read("renda")),
+    number_of_members::int(read("membros"))
+];     
+        ask RegiaoAmbiental {
+            do inicializar_regiao;
+        }
+    }
+    
+    reflex atualizar_clima_global {
+        if (cycle mod ciclos_por_ano = 0 and cycle > 0) {
+            ano <- ano + 1;
+        }
+        
+        mes_atual <- (cycle mod ciclos_por_ano) + 1;
+        
+        periodo_chuvoso <- (mes_atual >= 12 or mes_atual <= 5);
+        intensidade_chuvas <- periodo_chuvoso ? 1.5 + rnd(0.5) : 0.3 + rnd(0.4);
+        
+        if (rnd(1.0) < 0.15 * impacto_mudancas_climaticas) {
+            evento_extremo_ativo <- true;
+            intensidade_chuvas <- intensidade_chuvas * 2.0;
+            write "EVENTO CLIMÁTICO EXTREMO ativo no mês " + mes_atual + " de " + ano;
+        } else {
+            evento_extremo_ativo <- false;
+        }
+    }
+}
+
+species RegiaoAmbiental {
+    string name;
+    point center;
+    float radius;
+    string environment_type;
+    
+    int max_capacity;
+    int current_population <- 0;
+    float job_opportunities <- 1.0;
+    
+    float flood_risk <- 0.2;
+    float sea_level_rise <- 0.0;
+    float local_deforestation_rate <- 0.02;
+    float mining_activity <- 0.0;
+    float agricultural_activity <- 0.0;
+    float traditional_communities <- 0.0;
+    float forest_cover <- 0.7;
+    float land_conflicts <- 0.0;
+    
+    float water_level <- 50.0;
+    float environmental_quality <- 80.0;
+    float housing_security <- 70.0;
+    bool in_emergency <- false;
+    
+    int climate_events <- 0;
+    int incoming_migrations <- 0;
+    int outgoing_migrations <- 0;
+    int temporary_displacements <- 0;
+    
+    action inicializar_regiao {
+        switch environment_type {
+            match "urbano" {
+                environmental_quality <- 60.0;
+                housing_security <- 80.0;
+                water_level <- 40.0;
+            }
+            match "rural_costeiro" {
+                environmental_quality <- 85.0;
+                housing_security <- 40.0;
+                water_level <- 80.0;
+            }
+            match "rural_mineracao" {
+                environmental_quality <- 45.0;
+                housing_security <- 60.0;
+                water_level <- 30.0;
+            }
+            match "fronteira_agricola" {
+                environmental_quality <- 50.0;
+                housing_security <- 55.0;
+                water_level <- 35.0;
+            }
+            default {
+                environmental_quality <- 90.0;
+                housing_security <- 50.0;
+                water_level <- 70.0;
+            }
+        }
+    }
+    
+    reflex atualizar_condicoes_ambientais {
+        if (cycle mod 3 = 0) {
+            current_population <- length(FamiliaPara where (each.current_region = self));
+            
+            if (periodo_chuvoso and intensidade_chuvas > 1.5) {
+                water_level <- water_level + (intensidade_chuvas * 10);
+                
+                if (rnd(1.0) < flood_risk * intensidade_chuvas) {
+                    climate_events <- climate_events + 1;
+                    in_emergency <- true;
+                    housing_security <- housing_security * 0.6;
+                    water_level <- water_level + 20;
+                    
+                    write "ENCHENTE em " + name + "! Nível da água: " + with_precision(water_level, 1);
+                    
+                    ask (FamiliaPara where (each.current_region = self)) {
+                        if (rnd(1.0) < 0.4) {
+                            do become_temporarily_displaced;
+                        }
+                    }
+                }
+            } else if (!periodo_chuvoso) {
+                water_level <- max(10.0, water_level - 5);
+                in_emergency <- false;
+            }
+            
+            if (local_deforestation_rate > 0) {
+                forest_cover <- max(0.1, forest_cover - (local_deforestation_rate / 4));
+                environmental_quality <- environmental_quality - (local_deforestation_rate * 10);
+            }
+            
+            if (mining_activity > 0) {
+                environmental_quality <- environmental_quality - (mining_activity * 2);
+                water_level <- water_level - (mining_activity * 3);
+            }
+            
+            if (sea_level_rise > 0) {
+                housing_security <- housing_security - (sea_level_rise * 5);
+                if (rnd(1.0) < sea_level_rise * 2) {
+                    write "Impacto da elevação do nível do mar em " + name;
+                }
+            }
+            
+            if (current_population > max_capacity) {
+                float overpopulation_factor <- current_population / max_capacity;
+                environmental_quality <- environmental_quality / overpopulation_factor;
+                housing_security <- housing_security / overpopulation_factor;
+            }
+            
+            if (!in_emergency) {
+                housing_security <- min(100.0, housing_security + 2);
+                environmental_quality <- min(100.0, environmental_quality + 1);
+            }
+            
+            water_level <- max(0.0, min(150.0, water_level));
+            environmental_quality <- max(10.0, min(100.0, environmental_quality));
+            housing_security <- max(10.0, min(100.0, housing_security));
+        }
+    }
+    
+    float calculate_attractiveness {
+        float job_score <- job_opportunities * 10;
+        float environmental_score <- (environmental_quality + housing_security) / 2;
+        float capacity_score <- current_population < max_capacity ? 1.2 : 0.6;
+        float emergency_penalty <- in_emergency ? 0.3 : 1.0;
+        
+        return (job_score + environmental_score) * capacity_score * emergency_penalty;
+    }
+    
+    aspect default {
+        float general_situation <- (environmental_quality + housing_security) / 2;
+        rgb base_color;
+        
+        if (in_emergency) {
+            base_color <- vermelho_critico;
+        } else if (environment_type = "urbano") {
+            base_color <- cinza_urbano;
+        } else if (general_situation > 70) {
+            base_color <- verde_floresta;
+        } else if (general_situation > 40) {
+            base_color <- amarelo_atencao;
+        } else {
+            base_color <- marrom_terra;
+        }
+        
+        draw circle(radius) at: center color: rgb(base_color.red, base_color.green, base_color.blue, 100) 
+             border: base_color width: 2;
+        
+        draw name at: center + {0, -radius-5} color: rgb(0,0,0) font: font("Arial", 10, #bold);
+        
+        if (in_emergency) {
+            draw "⚠ EMERGÊNCIA" at: center + {0, radius+8} color: vermelho_critico font: font("Arial", 9, #bold);
+        }
+    }
+}
+
+species FamiliaPara {
+    string name;
+    RegiaoAmbiental current_region;
+    RegiaoAmbiental origin_region;
+    point migration_destination;
+    
+    string socioeconomic_profile;
+    float family_income <- 1000.0 + rnd(2000.0);
+    float education_level <- rnd(10.0);
+    int family_head_age <- 25 + rnd(40);
+    int number_of_members <- 2 + rnd(4);
+    
+    float social_capital <- rnd(1.0);
+    float local_knowledge <- rnd(1.0);
+    bool has_access_to_info <- rnd(1.0) < 0.6;
+    bool owns_land <- false;
+    
+    bool is_migrating <- false;
+    bool is_temporarily_displaced <- false;
+    bool considering_migration <- false;
+    bool is_returning <- false;
+    int critical_situation_cycles <- 0;
+    int total_migrations_familia <- 0;
+    int total_displacements <- 0;
+    
+    float environmental_risk_threshold <- 30.0 + rnd(40.0);
+    float economic_opportunity_threshold <- 20.0 + rnd(30.0);
+    
+    list<RegiaoAmbiental> known_regions <- [];
+    list<FamiliaPara> social_network <- [];
+    
+    reflex evaluate_situation {
+        if (cycle mod ciclos_por_ano = 0 and cycle > 0 and !is_migrating and !is_temporarily_displaced) {
+            float total_risk <- 100 - current_region.housing_security;
+            float opportunities <- current_region.job_opportunities;
+            
+            if (socioeconomic_profile = "rural_tradicional") {
+                total_risk <- total_risk * (2 - current_region.traditional_communities);
+            }
+            
+            if (total_risk > environmental_risk_threshold or opportunities < economic_opportunity_threshold) {
+                critical_situation_cycles <- critical_situation_cycles + 1;
+            } else {
+                critical_situation_cycles <- 0;
+                considering_migration <- false;
+            }
+            
+            if (critical_situation_cycles >= 2 and !considering_migration) {
+                considering_migration <- true;
+                do evaluate_migration_options;
+            }
+        }
+    }
+    
+    action evaluate_migration_options {
+        float migration_cost <- 500.0 + (distance_to(location, {50, 120}) * 2);
+        
+        if (family_income < migration_cost * 0.5) {
+            if (rnd(1.0) < 0.2) {
+                do start_migration(RegiaoAmbiental first_with (each.name = "Belém Metropolitana"));
+            }
+            return;
+        }
+        
+        RegiaoAmbiental best_destination <- nil;
+        float best_score <- current_region.calculate_attractiveness();
+        
+        list<RegiaoAmbiental> preferred_destinations <- [];
+        
+        RegiaoAmbiental belem <- RegiaoAmbiental first_with (each.name = "Belém Metropolitana");
+        if (belem != nil) {
+            preferred_destinations <- preferred_destinations + belem;
+        }
+        
+        ask social_network {
+            if (!contains(preferred_destinations, self.current_region)) {
+                preferred_destinations <- preferred_destinations + self.current_region;
+            }
+        }
+        
+        ask preferred_destinations {
+            float score <- self.calculate_attractiveness();
+            float network_bonus <- length(myself.social_network where (each.current_region = self)) * 10;
+            score <- score + network_bonus;
+            
+            if (score > best_score + 15) {
+                best_destination <- self;
+                best_score <- score;
+            }
+        }
+        
+        float migration_probability <- 0.6;
+        if (socioeconomic_profile = "rural_tradicional") {
+            migration_probability <- 0.4;
+        } else if (socioeconomic_profile = "urbano_periférico") {
+            migration_probability <- 0.8;
+        }
+        
+        if (best_destination != nil and rnd(1.0) < migration_probability) {
+            do start_migration(best_destination);
+        }
+    }
+    
+    action start_migration(RegiaoAmbiental destination) {
+        write name + " (" + socioeconomic_profile + ") migrando de " + current_region.name + " para " + destination.name;
+        
+        is_migrating <- true;
+        migration_destination <- destination.center + {rnd(destination.radius*0.6) - destination.radius*0.3, 
+                                            rnd(destination.radius*0.6) - destination.radius*0.3};
+        
+        float total_cost <- 500.0 + (distance_to(location, destination.center) * 2);
+        family_income <- family_income - total_cost;
+        
+        current_region.outgoing_migrations <- current_region.outgoing_migrations + 1;
+        destination.incoming_migrations <- destination.incoming_migrations + 1;
+        total_migracoes <- total_migracoes + 1;
+        total_migrations_familia <- total_migrations_familia + 1;
+        
+        if (!contains(known_regions, current_region)) {
+            known_regions <- known_regions + current_region;
+        }
+        
+        current_region <- destination;
+    }
+    
+    action become_temporarily_displaced {
+        if (!is_temporarily_displaced and !is_migrating) {
+            is_temporarily_displaced <- true;
+            total_displacements <- total_displacements + 1;
+            current_region.temporary_displacements <- current_region.temporary_displacements + 1;
+            total_deslocados_temporarios <- total_deslocados_temporarios + 1;
+            
+            write name + " tornou-se deslocado temporário em " + current_region.name;
+        }
+    }
+    
+    reflex move_during_migration {
+        if (is_migrating) {
+            point direction <- migration_destination - location;
+            float distance <- norm(direction);
+            
+            if (distance > 3.0) {
+                location <- location + (direction / distance) * 3.0;
+            } else {
+                location <- migration_destination;
+                is_migrating <- false;
+                considering_migration <- false;
+                critical_situation_cycles <- 0;
+                
+                write name + " chegou em " + current_region.name;
+            }
+        }
+    }
+    
+    reflex recover_from_displacement {
+        if (is_temporarily_displaced and !current_region.in_emergency) {
+            if (rnd(1.0) < 0.3) {
+                is_temporarily_displaced <- false;
+                write name + " retornou após deslocamento temporário";
+            }
+        }
+    }
+    
+    aspect default {
+        rgb family_color;
+        
+        if (is_temporarily_displaced) {
+            family_color <- amarelo_atencao;
+        } else if (is_migrating) {
+            family_color <- cinza_urbano;
+        } else if (considering_migration) {
+            family_color <- rgb(255, 192, 203);
+        } else {
+            switch socioeconomic_profile {
+                match "rural_tradicional" { family_color <- verde_floresta; }
+                match "urbano_periférico" { family_color <- cinza_urbano; }
+                match "rural_comercial" { family_color <- marrom_terra; }
+                default { family_color <- azul_amazonia; }
+            }
+        }
+        
+        float size <- 1.5 + (number_of_members * 0.3);
+        draw circle(size) color: family_color border: rgb(0,0,0) width: 1;
+        
+        if (is_migrating) {
+            draw line([location, migration_destination]) color: rgb(128,128,128) width: 1;
+        }
+    }
+}
+
+experiment Simulacao_MobilidadePara type: gui {
+    
+    parameter "Intensidade Mudanças Climáticas" var: impacto_mudancas_climaticas min: 1.0 max: 2.0 step: 0.1;
+    parameter "Taxa de Desmatamento Global" var: taxa_desmatamento min: 0.01 max: 0.1 step: 0.01;
+    
+    init {
+        create FamiliaPara number: 3 {
+            name <- "Família " + (index + 1);
+            
+            if (index < 8) {
+                current_region <- RegiaoAmbiental first_with (each.name = "Ilha do Marajó");
+                socioeconomic_profile <- "rural_tradicional";
+                owns_land <- rnd(1.0) < 0.3;
+            } else if (index < 12) {
+                current_region <- RegiaoAmbiental first_with (each.name = "Interior Amazônico");
+                socioeconomic_profile <- "rural_tradicional";
+                local_knowledge <- 0.8 + rnd(0.2);
+            } else if (index < 18) {
+                current_region <- RegiaoAmbiental first_with (each.name = "Sudeste Paraense");
+                socioeconomic_profile <- "rural_comercial";
+                owns_land <- rnd(1.0) < 0.4;
+            } else if (index < 22) {
+                current_region <- RegiaoAmbiental first_with (each.name = "Belém Metropolitana");
+                socioeconomic_profile <- "urbano_periférico";
+                has_access_to_info <- true;
+            } else {
+                current_region <- one_of(RegiaoAmbiental where (each.name != "Belém Metropolitana"));
+                socioeconomic_profile <- one_of(["rural_tradicional", "rural_comercial"]);
+            }
+            
+            origin_region <- current_region;
+            known_regions <- [current_region];
+            
+            location <- current_region.center + {rnd(current_region.radius*0.8) - current_region.radius*0.4, 
+                                              rnd(current_region.radius*0.8) - current_region.radius*0.4};
+            
+            if (rnd(1.0) < 0.3) {
+                social_network <- social_network + [one_of(FamiliaPara where (each != self))];
+            }
+        }
+    }
+    
+    output {
+        layout #split;
+        
+        monitor "═══ SITUAÇÃO GERAL ═══" value: "" color: rgb(0,0,0);
+        monitor "Ano" value: ano color: rgb(0,0,0);
+        monitor "Evento Extremo Ativo" value: evento_extremo_ativo ? "SIM ⚠" : "Não" 
+                color: evento_extremo_ativo ? vermelho_critico : verde_floresta;
+        
+        monitor "═══ MOBILIDADE HUMANA ═══" value: "" color: rgb(0,0,0);
+        monitor "Total de Migrações" value: total_migracoes color: vermelho_critico;
+        monitor "Deslocados Temporários" value: length(FamiliaPara where each.is_temporarily_displaced) color: amarelo_atencao;
+        monitor "Famílias Migrando" value: length(FamiliaPara where each.is_migrating) color: cinza_urbano;
+        monitor "Considerando Migrar" value: length(FamiliaPara where each.considering_migration) color: rgb(255, 192, 203);
+        
+        monitor "═══ REGIÕES CRÍTICAS ═══" value: "" color: rgb(0,0,0);
+        monitor "Emergências Ativas" value: length(RegiaoAmbiental where each.in_emergency) color: vermelho_critico;
+        monitor "Ilha do Marajó - Pop." value: length(FamiliaPara where (each.current_region.name = "Ilha do Marajó")) color: azul_amazonia;
+        monitor "Belém Metro - Pop." value: length(FamiliaPara where (each.current_region.name = "Belém Metropolitana")) color: cinza_urbano;
+        monitor "Interior Amazônico - Pop." value: length(FamiliaPara where (each.current_region.name = "Interior Amazônico")) color: verde_floresta;
+        
+        display "Evolução da Mobilidade"type: opengl {
+            chart "Padrões de Mobilidade no Tempo" type: series background: rgb(250,250,250) {
+                data "Total Migrações" value: total_migracoes color: vermelho_critico marker: false;
+                data "Deslocados Temporários" value: length(FamiliaPara where each.is_temporarily_displaced) color: amarelo_atencao marker: false;
+                data "Em Movimento" value: length(FamiliaPara where (each.is_migrating or each.is_temporarily_displaced)) color: cinza_urbano marker: false;
+                data "Considerando Migrar" value: length(FamiliaPara where each.considering_migration) color: rgb(255, 192, 203) marker: false;
+            }
+        }
+        
+        display "Análise de Fluxos Migratórios"type: opengl {
+            chart "Origem vs Destino das Migrações" type: histogram background: rgb(250,250,250) {
+                loop regiao over: RegiaoAmbiental {
+                    data regiao.name + " (Saídas)" value: regiao.outgoing_migrations color: vermelho_critico;
+                    data regiao.name + " (Entradas)" value: regiao.incoming_migrations color: verde_floresta;
+                }
+            }
+        }
+        
+        display "Impactos Climáticos e Sazonalidade"type: opengl {
+            chart "Eventos Climáticos e Intensidade" type: series background: rgb(250,250,250) {
+                data "Intensidade das Chuvas" value: intensidade_chuvas color: azul_amazonia marker: false;
+                data "Eventos Extremos" value: evento_extremo_ativo ? 3.0 : 0.0 color: vermelho_critico marker: false;
+                data "Período Chuvoso" value: periodo_chuvoso ? 2.0 : 0.5 color: rgb(0, 191, 255) marker: false;
+            }
+        }
+    }
+}
