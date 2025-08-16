@@ -1,0 +1,428 @@
+/**
+* Simulação Ambiental - Modelo de Seca, Agricultura e Migração
+* Este modelo simula os efeitos da seca na agricultura e a migração
+* de famílias entre a região rural costeira e urbana do Pará
+*/
+
+model Modelo_Migracao
+
+global {
+    // Dimensões do mundo
+    int largura_mundo <- 150;
+    int altura_mundo <- 100;
+    
+    // Estatísticas globais
+    int ano <- 0;
+    int ciclos_por_ano <- 12;
+    int total_migracoes <- 0;
+    int total_secas <- 0;
+    float chance_seca_base <- 0.15;
+    
+    // Cores
+    rgb azul <- rgb(100, 150, 255);
+    rgb verde <- rgb(34, 139, 34);
+    rgb marrom <- rgb(150, 75, 0);
+    rgb vermelho <- rgb(255, 0, 0);
+    rgb cinza <- rgb(128, 128, 128);
+    rgb rosa <- rgb(255, 192, 203);
+    
+    // Configurações de migração
+    float limiar_migracao <- 30.0; // Se produtividade < 30%, considera migrar
+    float custo_migracao <- 500.0; // Custo financeiro para migrar
+    
+    init {
+        // Criar as duas regiões do Pará
+        create Regiao number: 2;
+        
+        // Região 1 - Rural Costeira
+        Regiao[0].nome <- "Rural Costeira";
+        Regiao[0].centro <- {40, 50};
+        Regiao[0].raio <- 35;
+        Regiao[0].chance_seca <- 0.25;
+        Regiao[0].agua_inicial <- 70.0;
+        
+        // Região 2 - Urbana (Belém e região metropolitana)
+        Regiao[1].nome <- "Região Urbana";
+        Regiao[1].centro <- {110, 50};
+        Regiao[1].raio <- 30;
+        Regiao[1].chance_seca <- 0.10;
+        Regiao[1].agua_inicial <- 95.0;
+        
+        // Inicializar regiões
+        ask Regiao {
+            do inicializar;
+        }
+    }
+}
+
+species Regiao {
+    string nome;
+    point centro;
+    float raio;
+    float chance_seca;
+    float agua_inicial;
+    
+    // Condições ambientais atuais
+    float agua_disponivel;
+    float fertilidade_do_solo <- 100.0;
+    float desertificacao <- 0.0;
+    
+    // Capacidade e população
+    int capacidade_maxima <- 15;
+    int populacao_atual <- 0;
+    
+    // Estatísticas
+    int secas_na_regiao <- 0;
+    int migracoes_entrada <- 0;
+    int migracoes_saida <- 0;
+    
+    action inicializar {
+        agua_disponivel <- agua_inicial;
+        desertificacao <- rnd(10.0); // Variação inicial
+        
+        // Ajustar características específicas por região
+        if (nome = "Rural Costeira") {
+            capacidade_maxima <- 12; // Menor capacidade na área rural
+            fertilidade_do_solo <- 80.0; // Solo menos fértil na costa
+        } else if (nome = "Região Urbana") {
+            capacidade_maxima <- 20; // Maior capacidade urbana
+            fertilidade_do_solo <- 60.0; // Menos agricultura urbana
+        }
+    }
+    
+    reflex atualizar_ambiente {
+        if (cycle mod ciclos_por_ano = 0 and cycle > 0) {
+            
+            // Contar população atual
+            populacao_atual <- length(FamiliaAgricultora where (each.regiao_atual = self));
+            
+            // Aplicar evento climático
+            if (rnd(1.0) < chance_seca) {
+                // Seca na região
+                agua_disponivel <- agua_disponivel * (0.5 + rnd(0.3)); // 50-80% da água
+                fertilidade_do_solo <- fertilidade_do_solo * (0.6 + rnd(0.25)); // 60-85%
+                desertificacao <- desertificacao + (0.5 + rnd(1.0));
+                secas_na_regiao <- secas_na_regiao + 1;
+                
+                write "SECA em " + nome + "! Água: " + with_precision(agua_disponivel, 1) + "%";
+                
+            } else if (rnd(1.0) < 0.4) {
+                // Chuva moderada
+                agua_disponivel <- agua_disponivel * (1.05 + rnd(0.1)); // Pequena melhoria
+                fertilidade_do_solo <- fertilidade_do_solo * (1.02 + rnd(0.05));
+            } else {
+                // Degradação gradual
+                agua_disponivel <- agua_disponivel * (0.96 + rnd(0.06));
+                fertilidade_do_solo <- fertilidade_do_solo * (0.98 + rnd(0.03));
+                desertificacao <- desertificacao + rnd(0.1);
+            }
+            
+            // Recuperação baseada na capacidade de carga
+            float fator_superpopulacao <- populacao_atual > capacidade_maxima ? 0.8 : 1.2;
+            agua_disponivel <- agua_disponivel * fator_superpopulacao;
+            
+            // Limites
+            agua_disponivel <- max(5.0, min(150.0, agua_disponivel));
+            fertilidade_do_solo <- max(10.0, min(120.0, fertilidade_do_solo));
+            desertificacao <- max(0.0, min(95.0, desertificacao));
+        }
+    }
+    
+    // Calcular atratividade da região para migração
+    float calcular_atratividade {
+        float score_ambiental <- (agua_disponivel + fertilidade_do_solo - desertificacao) / 3.0;
+        float score_capacidade <- populacao_atual < capacidade_maxima ? 1.0 : 0.5;
+        
+        // Bonus para região urbana (oportunidades econômicas)
+        float bonus_urbano <- nome = "Região Urbana" ? 20.0 : 0.0;
+        
+        return score_ambiental * score_capacidade + bonus_urbano;
+    }
+    
+    aspect default {
+        // Cor baseada nas condições
+        float condicao_geral <- (agua_disponivel + fertilidade_do_solo - desertificacao) / 2.5;
+        rgb cor_regiao <- condicao_geral > 70 ? verde : 
+                         (condicao_geral > 40 ? rgb(255, 165, 0) : 
+                         (condicao_geral > 20 ? marrom : vermelho));
+        
+        // Cor especial para região urbana
+        if (nome = "Região Urbana") {
+            cor_regiao <- rgb(100, 150, 200); // Azul para área urbana
+        }
+        
+        draw circle(raio) at: centro color: rgb(cor_regiao.red, cor_regiao.green, cor_regiao.blue, 80) 
+             border: cor_regiao;
+        draw nome at: centro + {0, -raio-5} color: rgb(0,0,0) font: font("Arial", 10, #bold);
+    }
+}
+
+species FamiliaAgricultora {
+    string nome;
+    Regiao regiao_atual;
+    point destino_migracao;
+    
+    // Características da família
+    float quantidade_agua_necessaria <- 15.0 + rnd(10.0);
+    float produtividade <- 100.0;
+    float produtividade_inicial <- 100.0;
+    float eficiencia_uso_agua <- 0.8 + rnd(0.4);
+    float reserva_financeira <- 800.0 + rnd(1500.0);
+    
+    // Tecnologias e adaptações
+    bool tecnologia_irrigacao <- false;
+    bool diversificacao_culturas <- false;
+    bool sistema_captacao_agua <- false;
+    
+    // Estado de migração
+    bool migrando <- false;
+    bool considerando_migracao <- false;
+    int ciclos_baixa_produtividade <- 0;
+    int total_migracoes_familia <- 0;
+    
+    // Histórico e conexões
+    list<Regiao> regioes_conhecidas <- [];
+    Regiao regiao_origem;
+    
+    reflex atualizar_produtividade {
+        if (cycle mod ciclos_por_ano = 0 and cycle > 0 and !migrando) {
+            
+            // Obter condições da região atual
+            float agua_regiao <- regiao_atual.agua_disponivel;
+            float fertilidade_regiao <- regiao_atual.fertilidade_do_solo;
+            float desertificacao_regiao <- regiao_atual.desertificacao;
+            
+            // Calcular fatores ambientais
+            float fator_agua <- agua_regiao / 100.0;
+            float fator_fertilidade <- fertilidade_regiao / 100.0;
+            float fator_desertificacao <- max(0.1, 1.0 - (desertificacao_regiao / 100.0));
+            
+            // Aplicar eficiência e tecnologias
+            float agua_necessaria_real <- quantidade_agua_necessaria / eficiencia_uso_agua;
+            if (tecnologia_irrigacao) { agua_necessaria_real <- agua_necessaria_real * 0.6; }
+            if (sistema_captacao_agua) { agua_necessaria_real <- agua_necessaria_real * 0.8; }
+            
+            // Calcular produtividade
+            bool agua_suficiente <- agua_regiao >= agua_necessaria_real;
+            
+            if (agua_suficiente) {
+                produtividade <- produtividade_inicial * fator_agua * fator_fertilidade * fator_desertificacao;
+                regiao_atual.agua_disponivel <- regiao_atual.agua_disponivel - agua_necessaria_real;
+            } else {
+                produtividade <- produtividade * 0.3 * fator_fertilidade * fator_desertificacao;
+            }
+            
+            // Bonus por adaptações
+            if (diversificacao_culturas) { produtividade <- produtividade * 1.15; }
+            
+            // Atualizar estado de migração
+            if (produtividade < limiar_migracao) {
+                ciclos_baixa_produtividade <- ciclos_baixa_produtividade + 1;
+            } else {
+                ciclos_baixa_produtividade <- 0;
+                considerando_migracao <- false;
+            }
+            
+            // Considerar migração após 2 anos consecutivos de baixa produtividade
+            if (ciclos_baixa_produtividade >= 2 and !considerando_migracao) {
+                considerando_migracao <- true;
+                do avaliar_migracao;
+            }
+            
+            // Decisões de investimento
+            do decidir_investimentos;
+        }
+    }
+    
+    action avaliar_migracao {
+        if (reserva_financeira < custo_migracao) {
+            // Não tem recursos para migrar
+            return;
+        }
+        
+        // Encontrar melhor região para migrar
+        Regiao melhor_regiao <- nil;
+        float melhor_score <- regiao_atual.calcular_atratividade();
+        
+        ask Regiao {
+            float score <- self.calcular_atratividade();
+            if (score > melhor_score + 20.0) { // Precisa ser significativamente melhor
+                melhor_regiao <- self;
+                melhor_score <- score;
+            }
+        }
+        
+        // Decidir se vai migrar
+        if (melhor_regiao != nil and rnd(1.0) < 0.7) { // 70% de chance se encontrar boa região
+            do iniciar_migracao(melhor_regiao);
+        }
+    }
+    
+    action iniciar_migracao(Regiao destino) {
+        write nome + " iniciando migração de " + regiao_atual.nome + " para " + destino.nome;
+        
+        migrando <- true;
+        destino_migracao <- destino.centro + {rnd(destino.raio*0.8) - destino.raio*0.4, 
+                                            rnd(destino.raio*0.8) - destino.raio*0.4};
+        
+        // Custos da migração
+        reserva_financeira <- reserva_financeira - custo_migracao;
+        produtividade <- produtividade * 0.5; // Perda temporária durante migração
+        
+        // Estatísticas
+        regiao_atual.migracoes_saida <- regiao_atual.migracoes_saida + 1;
+        destino.migracoes_entrada <- destino.migracoes_entrada + 1;
+        total_migracoes <- total_migracoes + 1;
+        total_migracoes_familia <- total_migracoes_familia + 1;
+        
+        // Atualizar região
+        if (!contains(regioes_conhecidas, regiao_atual)) {
+            regioes_conhecidas <- regioes_conhecidas + regiao_atual;
+        }
+        regiao_atual <- destino;
+    }
+    
+    reflex mover_durante_migracao {
+        if (migrando) {
+            // Mover em direção ao destino
+            point direcao <- destino_migracao - location;
+            if (norm(direcao) > 2.0) {
+                location <- location + (direcao / norm(direcao)) * 2.0;
+            } else {
+                // Chegou ao destino
+                location <- destino_migracao;
+                migrando <- false;
+                considerando_migracao <- false;
+                ciclos_baixa_produtividade <- 0;
+                
+                write nome + " chegou em " + regiao_atual.nome;
+            }
+        }
+    }
+    
+    action decidir_investimentos {
+        // Investir em tecnologias se tiver recursos
+        if (produtividade < 60.0 and reserva_financeira > 600.0) {
+            if (!tecnologia_irrigacao and rnd(1.0) < 0.3) {
+                tecnologia_irrigacao <- true;
+                reserva_financeira <- reserva_financeira - 600.0;
+            }
+        }
+        
+        if (produtividade < 50.0 and reserva_financeira > 400.0 and !diversificacao_culturas) {
+            if (rnd(1.0) < 0.4) {
+                diversificacao_culturas <- true;
+                reserva_financeira <- reserva_financeira - 400.0;
+            }
+        }
+    }
+    
+    // Encontrar região atual baseada na posição
+    Regiao encontrar_regiao {
+        Regiao regiao_mais_proxima <- nil;
+        float menor_distancia <- 999999.0;
+        
+        ask Regiao {
+            float dist <- distance_to(myself.location, self.centro);
+            if (dist <= self.raio and dist < menor_distancia) {
+                regiao_mais_proxima <- self;
+                menor_distancia <- dist;
+            }
+        }
+        return regiao_mais_proxima;
+    }
+    
+    aspect default {
+        // Cor baseada no status
+        rgb cor_familia;
+        if (migrando) {
+            cor_familia <- cinza;
+        } else if (considerando_migracao) {
+            cor_familia <- rosa;
+        } else {
+            cor_familia <- produtividade > 70 ? verde : 
+                          (produtividade > 40 ? rgb(255, 165, 0) : vermelho);
+        }
+        
+        draw circle(2) color: cor_familia border: rgb(0,0,0) width: 1;
+        
+        // Mostrar trail de migração
+        if (migrando) {
+            draw line([location, destino_migracao]) color: rgb(128,128,128) width: 1;
+        }
+    }
+}
+
+experiment Simulacao_Migracao_Seca type: gui {
+    
+    parameter "Limiar de Migração (%)" var: limiar_migracao min: 10.0 max: 60.0 step: 5.0;
+    parameter "Custo de Migração" var: custo_migracao min: 200.0 max: 1000.0 step: 100.0;
+    parameter "Chance Base de Seca" var: chance_seca_base min: 0.05 max: 0.4 step: 0.05;
+    
+    init {
+        create FamiliaAgricultora number: 20 {
+            nome <- "Família " + (index + 1);
+            
+            // Distribuir famílias inicialmente - maioria na região rural costeira
+            if (index < 15) {
+                regiao_atual <- Regiao[0]; // Rural Costeira
+                location <- regiao_atual.centro + {rnd(regiao_atual.raio) - regiao_atual.raio/2, 
+                                                  rnd(regiao_atual.raio) - regiao_atual.raio/2};
+            } else {
+                regiao_atual <- Regiao[1]; // Região Urbana
+                location <- regiao_atual.centro + {rnd(regiao_atual.raio) - regiao_atual.raio/2, 
+                                                  rnd(regiao_atual.raio) - regiao_atual.raio/2};
+            }
+            
+            regiao_origem <- regiao_atual;
+            regioes_conhecidas <- [regiao_atual];
+        }
+    }
+    
+    output {
+        layout #split;
+        
+        // Monitores principais
+        monitor "═══ SIMULAÇÃO PARÁ ═══" value: "" color: rgb(0,0,0);
+        monitor "Ano" value: ano color: rgb(0,0,0);
+        monitor "Total de Migrações" value: total_migracoes color: vermelho;
+        monitor "Famílias Migrando" value: length(FamiliaAgricultora where each.migrando) color: cinza;
+        monitor "Considerando Migrar" value: length(FamiliaAgricultora where each.considerando_migracao) color: rosa;
+        
+        monitor "═══ REGIÕES DO PARÁ ═══" value: "" color: rgb(0,0,0);
+        monitor "Rural Costeira - Pop." value: length(FamiliaAgricultora where (each.regiao_atual.nome = "Rural Costeira")) color: verde;
+        monitor "Região Urbana - Pop." value: length(FamiliaAgricultora where (each.regiao_atual.nome = "Região Urbana")) color: azul;
+        
+        display "Mapa da Simulação" {
+            species Regiao aspect: default;
+            species FamiliaAgricultora aspect: default;
+        }
+        
+        // Gráfico de migração ao longo do tempo
+        display "Histórico de Migrações" {
+            chart "Migrações por Ano" type: series background: rgb(250,250,250) {
+                data "Total de Migrações" value: total_migracoes color: vermelho marker: false;
+                data "Famílias em Movimento" value: length(FamiliaAgricultora where each.migrando) color: cinza marker: false;
+            }
+        }
+        
+        // População por região
+        display "População por Região" {
+            chart "Distribuição Populacional" type: histogram background: rgb(250,250,250) {
+                loop regiao over: Regiao {
+                    data regiao.nome value: length(FamiliaAgricultora where (each.regiao_atual = regiao)) 
+                         color: regiao.nome = "Região Urbana" ? azul : verde;
+                }
+            }
+        }
+        
+        // Condições ambientais das regiões
+        display "Condições Ambientais por Região" {
+            chart "Água Disponível por Região" type: series background: rgb(250,250,250) {
+                loop regiao over: Regiao {
+                    data regiao.nome value: regiao.agua_disponivel color: regiao.nome = "Região Urbana" ? azul : verde marker: false;
+                }
+            }
+        }     
+    }
+}
